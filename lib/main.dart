@@ -20,6 +20,8 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:flutter_shaders/flutter_shaders.dart';
 
 void main() {
   runApp(const MyApp());
@@ -55,158 +57,135 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  bool _futuresInitialized = false;
-
-  static const String _shaderKey = 'shaders/example.frag';
-
-  Future<void> _initializeFutures() async {
-    // Loading the shader from an asset is an asynchronous operation, so we
-    // need to wait for it to be loaded before we can use it to generate
-    // Shader objects.
-    await FragmentProgramManager.initialize(_shaderKey);
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _futuresInitialized = true;
-    });
-  }
-
   @override
   void initState() {
-    _initializeFutures();
+    // _initializeFutures();
     super.initState();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            if (_futuresInitialized)
-              AnimatedShader(
-                program: FragmentProgramManager.lookup(_shaderKey),
-                duration: const Duration(seconds: 2),
-                size: const Size(300, 300),
-              )
-            else
-              const Text('Loading...'),
-          ],
-        ),
-      ),
-    );
+    return const CloudShaderWidget();
   }
 }
 
-/// A custom painter that updates the float uniform at index 0 with the
-/// current animation value and uses the shader to configure the Paint
-/// object that draws a rectangle onto the canvas.
-class AnimatedShaderPainter extends CustomPainter {
-  AnimatedShaderPainter(this.shader, this.animation) : super(repaint: animation);
-
-  final ui.FragmentShader shader;
-  final Animation<double> animation;
+class CloudShaderWidget extends StatefulWidget {
+  const CloudShaderWidget({super.key});
 
   @override
-  void paint(Canvas canvas, Size size) {
-    shader.setFloat(0, animation.value);
-    canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  _CloudShaderWidgetState createState() => _CloudShaderWidgetState();
 }
 
-/// This widget drives the animation of the AnimatedProgramPainter above.
-class AnimatedShader extends StatefulWidget {
-  const AnimatedShader({
-    super.key,
-    required this.program,
-    required this.duration,
-    required this.size,
-  });
-
-  final ui.FragmentProgram program;
-  final Duration duration;
-  final Size size;
-
-  @override
-  State<AnimatedShader> createState() => AnimatedShaderState();
-}
-
-class AnimatedShaderState extends State<AnimatedShader>
-                          with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late final ui.FragmentShader _shader;
+class _CloudShaderWidgetState extends State<CloudShaderWidget>
+    with SingleTickerProviderStateMixin {
+  late Ticker _ticker;
+  late Duration _startTime;
+  Duration _elapsed = Duration.zero;
 
   @override
   void initState() {
     super.initState();
-    _shader = widget.program.fragmentShader()
-      ..setFloat(0, 0.0)
-      ..setFloat(1, widget.size.width.toDouble())
-      ..setFloat(2, widget.size.height.toDouble());
-    _controller = AnimationController(
-      vsync: this,
-      duration: widget.duration,
-    )
-    ..addListener(() {
-      setState(() {});
-    })
-    ..addStatusListener((AnimationStatus status) {
-      switch (status) {
-        case AnimationStatus.completed:
-          _controller.reverse();
-          break;
-        case AnimationStatus.dismissed:
-          _controller.forward();
-          break;
-        default:
-          break;
-      }
-    })
-    ..forward();
-  }
-
-  @override
-  void didUpdateWidget(AnimatedShader oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _controller.duration = widget.duration;
+    _startTime = Duration.zero; // Initialize start time
+    _ticker = Ticker((elapsed) {
+      setState(() {
+        _elapsed = elapsed; // Update elapsed time since the ticker started
+      });
+    });
+    _ticker.start(); // Start the ticker for continuous updates
   }
 
   @override
   void dispose() {
-    _controller.dispose();
-    _shader.dispose();
+    _ticker.stop();
+    _ticker.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: AnimatedShaderPainter(_shader, _controller),
-      size: widget.size,
+    return ShaderBuilder(
+      assetKey: 'shaders/clouds.frag', // Path to your shader file
+      (context, shader, child) {
+        return CustomPaint(
+          painter: _CloudShaderPainter(
+            shader,
+            time: _elapsed.inMilliseconds / 1000.0, // Elapsed time in seconds
+          ),
+          // size: MediaQuery.of(context).size, // Full screen size
+          // size: MediaQuery.sizeOf(context), // Full screen size
+        );
+      },
     );
   }
 }
 
-/// A utility class for initializing shader programs from asset keys.
-class FragmentProgramManager {
-  static final Map<String, ui.FragmentProgram> _programs = <String, ui.FragmentProgram>{};
+class _CloudShaderPainter extends CustomPainter {
+  final ui.FragmentShader shader;
+  final double time;
 
-  static Future<void> initialize(String assetKey) async {
-    if (!_programs.containsKey(assetKey)) {
-      final ui.FragmentProgram program = await ui.FragmentProgram.fromAsset(
-        assetKey,
-      );
-      _programs.putIfAbsent(assetKey, () => program);
-    }
+  _CloudShaderPainter(this.shader, {required this.time});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // print(size.width.toString() + " " + size.height.toString());
+    shader
+      ..setFloat(0, time) // Pass iTime (elapsed time)
+      ..setFloat(1, size.height) // Pass iResolution.x
+      ..setFloat(2, size.width); // Pass iResolution.y
+
+    final paint = Paint()..shader = shader;
+
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.height, size.width),
+      paint,
+    );
   }
 
-  static ui.FragmentProgram lookup(String assetKey) => _programs[assetKey]!;
+  @override
+  bool shouldRepaint(_CloudShaderPainter oldDelegate) {
+    return time != oldDelegate.time; // Ensures continuous repainting
+  }
+}
+
+class OceanShaderWidget extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return ShaderBuilder(
+      assetKey: 'shaders/oceanwaves.frag', // Path to your shader file
+      (context, shader, child) {
+        return CustomPaint(
+          painter: _OceanShaderPainter(shader),
+          size: MediaQuery.of(context).size,
+        );
+      },
+    );
+  }
+}
+
+class _OceanShaderPainter extends CustomPainter {
+  final ui.FragmentShader shader;
+
+  _OceanShaderPainter(this.shader);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    double time =
+        DateTime.now().millisecondsSinceEpoch / 1000.0; // Continuous time
+    shader
+      ..setFloat(0, time) // iTime
+      ..setFloat(1, size.width) // iResolution.x
+      ..setFloat(2, size.height); // iResolution.y
+
+    final paint = Paint()..shader = shader;
+
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    return true; // Continuous repainting
+  }
 }
